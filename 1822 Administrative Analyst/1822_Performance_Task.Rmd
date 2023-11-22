@@ -1,0 +1,405 @@
+---
+title: "1822 Administrative Analyst Performance Task"
+author: "Jie Heng Yu"
+date: "10/28/2023"
+output: html_document
+---
+
+# Libraries
+
+```{r, include = FALSE}
+library(tidyverse)
+```
+
+# Datasets
+
+```{r}
+surveyResponses <- as_tibble(read.csv('survey_responses.csv'))
+testScores <- as_tibble(read.csv('test_scores.csv'))
+testScores
+surveyResponses
+```
+
+# Data Preparation
+
+```{r}
+testScoresDF <- filter(testScores, grepl('K-8', School))
+surveyResponsesDF <- filter(surveyResponses, grepl('K8', school))
+testScoresDF$School <- recode(testScoresDF$School, 'Buena Vista Horace Mann K-8' = 'Buena Vista / Mann K8', 'Lawton K-8' = 'Lawton Alt K8', 'Lilienthal (Claire) K-8' = 'Lilienthal Alt K8', 'Rooftop K-8' = 'Rooftop Alt K8', 'Yu (Alice Fong) K-8' = 'Yu (A.F.) Alt K8')
+testScoresDF <- filter(testScoresDF, School %in% c('Buena Vista / Mann K8', 'Lawton Alt K8', 'Lilienthal Alt K8', 'Rooftop Alt K8', 'Yu (A.F.) Alt K8'))
+testScoresDF$Asian[testScoresDF$Hawaiian == 'Yes'] <- 'Yes'
+testScoresDF <- select(testScoresDF, -NA., -Filipino, -Multi_Race, -Hawaiian)
+surveyResponsesDF <- select(surveyResponsesDF, -count) %>%
+  filter(group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White', 'ELL', 'SPED', 'Low SES'))
+testScoresDF$Calgrade <- case_when(testScoresDF$Calgrade %in% 1:5 ~ 'Elementary',
+                                   TRUE ~ 'Middle')
+testScoresDF
+surveyResponsesDF
+```
+
+# Student Performance based on Growth Mindset
+
+We can get an idea of students' growth mindsets based on their favorability of the constructs of Social-Emotional Learning. I am also going to assume that the school that a student goes to has a major affect on his/her growth mindset, so I will be looking at favorability for each K-8 school.
+
+```{r}
+filter(surveyResponsesDF, domain == 'Social-Emotional Learning') %>%
+  group_by(school, construct) %>%
+  summarise(avg_favor = mean(favorability))
+ggplot(filter(surveyResponsesDF, domain == 'Social-Emotional Learning') %>%
+         group_by(school, construct) %>%
+         summarise(avg_favor = mean(favorability)),
+       aes(x = school, y = avg_favor, fill = construct)) +
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  labs(title = 'Growth Mindset Favorability for K-8 Schools') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+Now, let's see the average scaled score for the English & Math assessments for each school.
+
+```{r}
+testScoresDF %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS)) %>%
+  pivot_longer(cols = c('avg_ELASS', 'avg_MathSS'), 
+               names_to = 'measure', values_to = 'scores')
+ggplot(testScoresDF %>%
+         group_by(School) %>%
+         summarise(avg_ELASS = mean(ELASS),
+                   avg_MathSS = mean(MathSS)) %>%
+         pivot_longer(cols = c('avg_ELASS', 'avg_MathSS'), 
+                      names_to = 'measure', values_to = 'scores'),
+       aes(x = School, y = scores, fill = measure)) +
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  labs(title = 'Average English & Math Scaled Scores for K-8 Schools') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+Based on the above two figures, there may be a relationship that if students' favorability their growth mindsets is lower, that they we will perform worse on the English & Math assessment.
+
+We'll consolidate the students' favorability of their growth mindset for each school & the assessment scores for each school, & then create a model for their relationship.
+
+```{r}
+x <- filter(surveyResponsesDF, domain == 'Social-Emotional Learning') %>%
+  group_by(school) %>%
+  summarise(avg_favor = mean(favorability))
+x
+y <- testScoresDF %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+y
+plot(x$avg_favor, y$avg_Math_ELA)
+abline(lm(y$avg_Math_ELA ~ x$avg_favor))
+summary(lm(y$avg_Math_ELA ~ x$avg_favor))
+```
+
+# Student Performance based on Growth Mindset, Faceted Across SubGroups
+
+Since race is independent in this dataset & SES/SPED/ELL are non-independent, we'll analyse them separately. We will calculate assessment scores for SES/SPED/ELL individually though, for accuracy. Starting with race.
+
+```{r}
+filter(surveyResponsesDF, domain == 'Social-Emotional Learning' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability))
+ggplot(filter(surveyResponsesDF, domain == 'Social-Emotional Learning' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+         group_by(school, group, construct) %>%
+         summarise(avg_favor = mean(favorability)),
+       aes(x = school, y = avg_favor, colour = group, shape = construct,
+           group = interaction(group, construct))) +
+  geom_point(size = 2) + geom_line(alpha = 0.5) +
+  labs(title = 'Growth Mindset for K-8 Schools, Grouped by Race') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+Surprisingly (at least to me), African Americans do not attend these K-8 schools. Hispanics/Latinos seem to have lower favor of their own growth mindset when compared to Whites & Asians at these K-8 schools that have Hispanic/Latino, White, & Asian students. We'll look at English & Math assessment scores for existing races in each school. Based on the figure above, Buena Vista only has Hispanic/Latinos, Lawton only has Asians, Lilienthal has Hispanic/Latinos, Asians & Whites, so does Rooftop, A.F. Yu only has Asians.
+
+```{r}
+a <- testScoresDF %>%
+  group_by(School, AA, HL, Asian, White) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS)) %>%
+  filter(AA == 'Yes' | HL == 'Yes' | Asian == 'Yes' | White == 'Yes')
+a$group <- apply(a, 1, function(x) {
+  case_when(x['AA'] == 'Yes' ~ 'African American',
+            x['HL'] == 'Yes' ~ 'Hispanic/Latino',
+            x['Asian'] == 'Yes' ~ 'Asian',
+            x['White'] == 'Yes' ~ 'White')
+})
+a <- as_tibble(a) %>% select(School, group, avg_ELASS, avg_MathSS) %>%
+  filter((School == 'Buena Vista / Mann K8' & group == 'Hispanic/Latino') | (School == 'Lawton Alt K8' & group == 'Asian') | (School == 'Lilienthal Alt K8' & group != 'African American') | (School == 'Rooftop Alt K8' & group != 'African American') | (School == 'Yu (A.F.) Alt K8' & group == 'Asian')) %>%
+  pivot_longer(cols = c('avg_ELASS', 'avg_MathSS'), 
+               names_to = 'measure', values_to = 'value')
+ggplot(a, aes(x = School, y = value, colour = group, shape = measure,
+              group = interaction(group, measure))) +
+  geom_point(size = 2) + geom_line(alpha = 0.5) +
+  labs(title = 'Assessment Scores for K-8 Schools, Grouped by Race') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+The shape of the visualisations of assessment scores for k-8 schools grouped by race seems to mimic the shape of the visualisations of growth mindset favorability for k-8 schools grouped by race, so maybe there is a relationship between the two?
+
+```{r, message = FALSE}
+b <- filter(surveyResponsesDF, domain == 'Social-Emotional Learning' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group) %>%
+  summarise(avg_favor = mean(favorability)) %>%
+  as_tibble()
+b
+c <- a %>% group_by(School, group) %>%
+  summarise(avg_Math_ELA = mean(value)) %>% as_tibble()
+c
+```
+
+Combine both into one data set, recode group variables into numeric so multiple model can understand. For Schools, 1 = Buena Vista, 2 = Lawton, 3 = Lilienthal, 4 = Rooftop, 5 = A.F. Yu. For groups, 1 = Hispanic/Latino, 2 = Asian, 3 = White.
+
+```{r}
+c <- mutate(c, avg_favor = b$avg_favor)
+c$School <- recode(c$School, 'Buena Vista / Mann K8' = 1, 'Lawton Alt K8' = 2,
+                   'Lilienthal Alt K8' = 3, 'Rooftop Alt K8' = 4, 
+                   'Yu (A.F.) Alt K8' = 5)
+c$group <- recode(c$group, 'Hispanic/Latino' = 1, 'Asian' = 2, 'White' = 3)
+c
+summary(lm(c$avg_Math_ELA ~ c$avg_favor + c$School + c$group))
+```
+
+```{r, warning = FALSE}
+ggplot(c, aes(x = avg_favor, y = avg_Math_ELA, 
+              colour = factor(group), shape = factor(School))) +
+  geom_point(size = 2) + geom_line(alpha = 0.5) +
+  labs(title = 'Assessment Scores by Mindset Favorability, Grouped by Race & School') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+There is an positive relationship between favorability of growth mindset constructs & assessment scores. Hispanic/Latino students seem to perform the worse on the assessment compared Asians & White students at schools that house all three races & in general. Asian & White students seem to perform similarly on the assessment, receiving similar scores on average. 
+
+Now for dispositions.
+
+```{r}
+filter(surveyResponsesDF, domain == 'Social-Emotional Learning' & group %in% c('Low SES', 'SPED', 'ELL')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability))
+ggplot(filter(surveyResponsesDF, domain == 'Social-Emotional Learning' & group %in% c('Low SES', 'SPED', 'ELL')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability)),
+  aes(x = school, y = avg_favor, colour = group, shape = construct,
+      group = interaction(group, construct))) +
+  geom_point(size = 2) + geom_line(alpha = 0.5) +
+  labs(title = 'Growth Mindset Favorability by School, Grouped by Disposition') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+Buena Vista is the only K-8 in this data set whose ELL student completed the survey responses. Low Social-Economical Status students seem to be prevalent at all K-8 schools & Special Education students are in all K-8 schools but Alice Fong. By the way the this figure & previous figures seem, Alice Fong seems like a school with high-scoring Asian students. There doesn't seem to be any clear trend in the visualisation though. Below are the assessment scores for ELL students.
+
+```{r}
+filter(testScoresDF, Englang == 'EL') %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+```
+
+For SPED students:
+
+```{r}
+filter(testScoresDF, Sped == 'Yes') %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+```
+
+For Low SES students:
+
+```{r}
+filter(testScoresDF, Econ_Dis == 'Yes') %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+```
+
+ELL students have lower scores on their English assessments. SPED students seem to do the worst comparatively to ELL & Low SES students. Low SES doesn't seem to have an effect on the students' ability to complete their assessments.
+
+# Student Performance based on School Culture/Climate
+
+```{r}
+filter(surveyResponsesDF, domain == 'Culture/Climate') %>%
+       group_by(school, construct) %>%
+       summarise(avg_favor = mean(favorability))
+ggplot(filter(surveyResponsesDF, domain == 'Culture/Climate') %>%
+         group_by(school, construct) %>%
+         summarise(avg_favor = mean(favorability)),
+       aes(x = school, y = avg_favor, fill = construct)) +
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  labs(title = 'Culture/Climate Favorability for K-8 Schools') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) 
+```
+
+Since it is difficult to get a description of what a school's culture is like, the students' favorability for each of the constructs gives us an idea of what their school's culture/climate is.
+
+```{r}
+testScoresDF %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS)) %>%
+  pivot_longer(cols = c('avg_ELASS', 'avg_MathSS'), 
+               names_to = 'measure', values_to = 'scores')
+ggplot(testScoresDF %>%
+         group_by(School) %>%
+         summarise(avg_ELASS = mean(ELASS),
+                   avg_MathSS = mean(MathSS)) %>%
+         pivot_longer(cols = c('avg_ELASS', 'avg_MathSS'), 
+                      names_to = 'measure', values_to = 'scores'),
+       aes(x = School, y = scores, fill = measure)) +
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  labs(title = 'Average English & Math Scaled Scores for K-8 Schools') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) 
+```
+
+It seems that the greater the overall favorability for each of the constructs that a school's culture/climate is, the higher the average english & math scores are on the assessment. 
+
+```{r}
+filter(surveyResponsesDF, domain == 'Culture/Climate') %>%
+       group_by(school) %>%
+       summarise(avg_favor = mean(favorability))
+x <- filter(surveyResponsesDF, domain == 'Culture/Climate') %>%
+       group_by(school) %>%
+       summarise(avg_favor = mean(favorability))
+testScoresDF %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+y <- testScoresDF %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+plot(x$avg_favor, y$avg_Math_ELA)
+abline(lm(y$avg_Math_ELA ~ x$avg_favor))
+summary(lm(y$avg_Math_ELA ~ x$avg_favor))
+```
+
+Upon looking at the model, there doesn't seem to be a relationship. The difference in average english & math scores on the assessment per the difference in favorability of the constructs of each school's culture/climate is not significant enough that we can rule out that there isn't a relationship.
+
+# Student Performance based on School Culture/Climate, Faceted across Groups
+
+Since race acts as an independent variables in our data set & SES/SPED/ELL are non-independent, we will compare across race separately from SES/SPED/ELL. Works also to not crowd a visualization: 6 disposition x 4 race = 24 combinations; 24 combinations x 5 schools = 120 layers in visualization (potentially).
+
+```{r}
+filter(surveyResponsesDF, domain == 'Culture/Climate' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability))
+ggplot(filter(surveyResponsesDF, domain == 'Culture/Climate' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability)),
+  aes(x = school, y = avg_favor, colour = group, shape = construct,
+      group = interaction(group, construct))) +
+  geom_point(size = 2) + geom_line(alpha = 0.5) +
+  labs(title = 'School Culture Favorability, Grouped by Race') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+Overall, Hispanic/Latinos seem to have lower favor of their school's culture/climate compared to White & Asian students. White & Asian students have similar favor of their school's climate/culture overall. In schools where all three races are present, Hispanic/Latinos generally have the lowest favor, then White, then Asian students, of their school's culture/climate. Buena Vista only has Hispanic/Latino. Lawton & AF Yu only has Asian. Lilienthal & Rooftop have Hispanics, Asians, & Whites.
+
+```{r}
+testScoresDF$group <- apply(testScoresDF, 1, function(x) {
+  case_when(x['AA'] == 'Yes' ~ 'African American',
+            x['HL'] == 'Yes' ~ 'Hispanic/Latino',
+            x['Asian'] == 'Yes' ~ 'Asian',
+            x['White'] == 'Yes' ~ 'White')
+})
+a <- as_tibble(testScoresDF) %>%
+  group_by(School, group) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2) %>%
+  filter(!is.na(group))
+a <- a[c(-2, -4, -5, -9), ]
+a
+```
+
+We've seen this the above table before when we looked at student performance based on growth mindset. We'll create a model a table for culture/climate & combine it with the score from the above table.
+
+```{r}
+b <- filter(surveyResponsesDF, domain == 'Culture/Climate' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group) %>%
+  summarise(avg_favor = mean(favorability)) %>%
+  as_tibble() %>%
+  mutate(avg_Math_ELA = a$avg_Math_ELA)
+```
+
+We'll generate a model from all the variables to see if there are relationships. For Schools, 1 = Buena Vista, 2 = Lawton, 3 = Lilienthal, 4 = Rooftop, 5 = A.F. Yu. For groups, 1 = Hispanic/Latino, 2 = Asian, 3 = White.
+
+
+```{r}
+b$school <- recode(b$school, 'Buena Vista/ Mann K8' = 1, 'Lawton Alt K8' = 2, 'Lilienthal Alt K8' = 3, 'Rooftop Alt K8' = 4, 'Yu (A.F.) Alt K8' = 5)
+b$group <- recode(b$group, 'Hispanic/Latino' = 1, 'Asian' = 2, 'White' = 3)
+b
+summary(lm(b$avg_Math_ELA ~ b$avg_favor + b$school + b$group))
+```
+
+From the model, we can tell that there is a positive relationship between a student's favor of the school's culture/climate & their assessment scores. The relationship is significant so much so that it is highly unlikely that there is actually no relationship. When we add race to that equation, the positive relationship becomes even more positive. From Hispanic/Latinos to Asians to White students, favorability increases per race, & increased favorability relates to increased assessment scores.
+
+Now for dispositions SES/ELL/SPED.
+
+```{r}
+filter(surveyResponsesDF, domain == 'Culture/Climate' & group %in% c('Low SES', 'ELL', 'SPED')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability))
+ggplot(filter(surveyResponsesDF, domain == 'Culture/Climate' & group %in% c('Low SES', 'ELL', 'SPED')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favor = mean(favorability)),
+  aes(x = school, y = avg_favor, colour = group, shape = construct,
+      group = interaction(group, construct))) +
+  geom_point(size = 2) + geom_line(alpha = 0.5) +
+  labs(title = 'School Culture Favorability, Grouped by Disposition') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+School Culture favorability seems similar for Low SES & Sped students across schools that have both ethnic groups. Buena Vista is the only school with ELL group. ELL favorability of the school is seems slightly lower than for Low SES & SPED groups. 
+
+Below are the assessment scores for ELL students.
+
+```{r}
+filter(testScoresDF, Englang == 'EL') %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+```
+
+For SPED students:
+
+```{r}
+filter(testScoresDF, Sped == 'Yes') %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+```
+
+For Low SES students:
+
+```{r}
+filter(testScoresDF, Econ_Dis == 'Yes') %>%
+  group_by(School) %>%
+  summarise(avg_ELASS = mean(ELASS),
+            avg_MathSS = mean(MathSS),
+            avg_Math_ELA = (avg_ELASS + avg_MathSS)/2)
+```
+
+From these tables, we can see that Low SES student's favor of their school's culture has little effect on their assessment scores. We cannot make conclusions on ELL students & their favor of their school's culture/climate comparatively to other schools, but we do see that they seem to be the worst performing overall on their assessments compared to other schools. SPED kids have high favorability of their school's culture, & perform very well on their assessments.
+
+It seems that for both growth mindset & the school's culture/climate, that if the student's favor is great, that the student will perform well on their assessments. For the program groups, ELL have lower favor than Low SES & SPED, & they seem to perform worse on their assessments. For the ethnic groups, Hispanics have the lower favor than Asian & White students & they seem to perform wosrse on their assessments as well.

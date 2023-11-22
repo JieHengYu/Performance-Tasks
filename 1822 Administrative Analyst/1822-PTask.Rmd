@@ -1,0 +1,458 @@
+---
+title: "1822 Performance Task"
+author: "Jie Heng Yu"
+date: "11/5/2023"
+output: html_document
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+```
+
+# 1822 Performance Task
+
+# Data Preparation
+
+To begin, we read in the original datasets.
+
+```{r}
+testScoreDF <- as_tibble(read.csv('test_scores.csv'))
+testScoreDF
+surveyDF <- as_tibble(read.csv('survey_responses.csv'))
+surveyDF
+```
+
+Since we want to work with data for K-8 schools, we'll reduce the datasets to only have K-8 schools.
+
+```{r}
+testScoreDF <- filter(testScoreDF, grepl('K-8', School))
+testScoreDF
+surveyDF <- filter(surveyDF, grepl('K8', school))
+surveyDF
+```
+
+Let's see which schools we are working with.
+
+```{r}
+unique(testScoreDF$School)
+unique(surveyDF$school)
+```
+
+Looks like there are only five K-8 schools that have completed the survey. We have the test scores of eight K-8 schools. For the three K-8 schools that did not complete the survey, we won't be able to see the their students' performance patterns vary across their growth mindsets or the school's culture/climate.
+
+We'll clean up both datasets so they use similar terminology, remove unnecessary columns, separate out the three K-8 schools who didn't complete surveys into another dataset so I don't get confused. Hawaiian students are lumped in with Asian students, so we'll recode the 'Asian' column to reflect that. We are only interested in the English learners in the `Englang` column, so we will recode everything that isn't 'EL' to 'Else'. Since being an English language learner, being part of the special education program, & having low socio-economic status are not mutually exclusive with each other or any ethnic subgroup specified for the analysis of this data, we will perform analysis on the program groups & ethnic groups separately. That being said, I will create two new columns for program groups & ethnic groups for future ease of analysis.
+
+```{r}
+testScoreDF$School <- recode(testScoreDF$School, 'Buena Vista Horace Mann K-8' = 'Buena Vista/ Mann K8', 'Lawton K-8' = 'Lawton Alt K8', 'Lilienthal (Claire) K-8' = 'Lilienthal Alt K8', 'Rooftop K-8' = 'Rooftop Alt K8', 'Yu (Alice Fong) K-8' = 'Yu (A.F.) Alt K8')
+testScoreDF$Asian[testScoreDF$Hawaiian == 'Yes'] <- 'Yes'
+testScoreDF$Calgrade <- case_when(testScoreDF$Calgrade %in% 1:5 ~ 'Elementary',
+                                  TRUE ~ 'Middle')
+testScoreDF$Englang[testScoreDF$Englang != 'EL'] <- 'Else'
+testScoreDF <- select(testScoreDF, -Hawaiian, -Filipino, -Multi_Race, -NA.)
+surveyDF <- select(surveyDF, -count)
+testScoreDF$ProgramGroup <- apply(testScoreDF, 1, function(x) {
+  if (x['Englang'] == 'EL' & x['Econ_Dis'] == 'Yes' & x['Sped'] == 'Yes') {
+    testScoreDF$ProgramGroup <- 'EL & SES & SPED'
+  } else if (x['Englang'] == 'EL' & x['Econ_Dis'] == 'Yes' & x['Sped'] == 'No') {
+    testScoreDF$ProgramGroup <- 'EL & SES'
+  } else if (x['Englang'] == 'EL' & x['Econ_Dis'] == 'No' & x['Sped'] == 'Yes') {
+    testScoreDF$ProgramGroup <- 'EL & SPED'
+  } else if (x['Englang'] == 'Else' & x['Econ_Dis'] == 'Yes' & x['Sped'] == 'Yes') {
+    testScoreDF$ProgramGroup <- 'SES & SPED'
+  } else if (x['Englang'] == 'EL' & x['Econ_Dis'] == 'No' & x['Sped'] == 'No') {
+    testScoreDF$ProgramGroup <- 'EL'
+  } else if (x['Englang'] == 'Else' & x['Econ_Dis'] == 'Yes' & x['Sped'] == 'No') {
+    testScoreDF$ProgramGroup  <- 'SES'
+  } else {
+    testScoreDF$ProgramGroup <- 'SPED'
+  }
+})
+testScoreDF$EthnicGroup <- apply(testScoreDF, 1, function(x) {
+  if (x['HL'] == 'Yes') {testScoreDF$EthnicGroup <- 'HL'}
+  else if (x['Asian'] == 'Yes') {testScoreDF$EthnicGroup <- 'Asian'}
+  else if (x['AA'] == 'Yes') {testScoreDF$EthnicGroup <- 'AA'}
+  else {testScoreDF$EthnicGroup <- 'White'}
+})
+testScoreDF <- select(testScoreDF, School, ProgramGroup, EthnicGroup, ELASS, MathSS)
+surveyDF <- filter(surveyDF, group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White', 'Low SES', 'SPED', 'ELL'))
+unique(surveyDF$group)
+```
+
+It's looks like African American students did not complete the survey at any K-8 school, so we will take them out when accounting for student performance across school culture/climate or growth mindset.
+
+```{r}
+testScoreDF
+surveyDF
+```
+
+That looks pretty good for now, if we need to make small changes, we'll do them later.
+
+# General Analysis
+
+First, we'll look at average ELASS & MathSS scores for each K-8 school.
+
+```{r, message = FALSE}
+testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = School, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'ELASS & MathSS for K-8 Schools') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+On average, Lilienthal, Lawton, & Yu A.F. students perform very well on their English & Math assessments. On average, Revere & SF Community students seem to perform worse on their English & Math assessments compared students from other K-8 Schools. Lawton students actually clock in with the highest average ELASS & MathSS scores across all K-8 schools at 2,585 & 2,601, respectively. SF Community students average the lowest ELASS & MathSS scores of all K-8 schools at 2,405 & 2,401.
+
+Now let's see student performance across program groups.
+
+```{r, message = FALSE, fig.width=10, fig.height=10}
+testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, ProgramGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, ProgramGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = ProgramGroup, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  facet_wrap(~ School) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'ELASS & MathSS for Program Groups') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+First off, I would like to point out how it's interesting how Carmichael does not have any EL & SPED students who completed the assessments. But what's even more interesting is that Yu A.F. does not have EL & SES & SPED students, EL & SPED, & SES & SPED students who completed the assessments. Yu A.F. doesn't seem to be as diverse as the other K-8 schools in terms of their program groups: I wonder if this is because these are the population values, or there is a selection process to get into Yu A.F. Across all K-8 schools, being EL does seem to have a relationship with lower average ELASS compared to the other program groups. Pure SPED students seem to perform pretty well on both the English & Math assessments compared to other program groups for all K-8 schools. Students who purely have low SES also seem to perform pretty well on both English & Math assessments compared to other program groups for all K-8 schools, implying that having low SES has little or no affect on student performance. Students who are EL & SPED & attend Buena Vista or SF Community don't perform as well on their assessments compared to other program groups at the same school. Lawton, Lilienthal, & Yu A.F. students seem to perform decently well on their assessments regardless of their program group compared to students in the same program groups at different K-8 schools. This agrees with our figure from earlier. Revere Paul & SF Community students seem to perform worse on their assessments regardless of their program group compared to students in the same program group at different K-8 schools. This also agrees with our earlier figure.
+
+Now, let's move on to ethnic groups.
+
+```{r, message = FALSE}
+testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, EthnicGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, EthnicGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = EthnicGroup, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  facet_wrap(~ School) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'ELASS & MathSS for Ethnic Groups') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+Now this is a lot more interesting. Buena Vista, Yu A.F., & Lawton did not have any AA students who completed the assessments. Buena Vista, Revere, & SF Community did not have Asian students who complete the assessments. Lawton, & Yu A.F did not have HL students who completed the assessments. SF Community did not have White students who completed the assessments. I wonder if this is because the students belong to these ethnic groups just do not attend the school, resulting in no test scores, or there's a selection process for these schools, or maybe even something else. Asian or White students seem to perform better on their assessments compared to AA or HL students in the same schools, if they completed the assessments. I wonder if higher average assessment scores for each school is related to the number of Asian or White students who completed the assessment for that school.
+
+```{r, message = FALSE}
+testScoreDF %>%
+  group_by(School, EthnicGroup) %>%
+  summarise(Count = n())
+ggplot(testScoreDF %>%
+  group_by(School, EthnicGroup) %>%
+  summarise(Count = n()),
+  aes(x = School, y = Count, fill = EthnicGroup)) +
+  geom_bar(colour = 'black', position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Ethnic Group Count for K-8 Schools') +
+  scale_fill_brewer(palette = 'Pastel2')
+```
+
+As we noticed from before, on average, students from Lilienthal, Lawton, & Yu A.F. seemed to perform better on their assessments than students at other K-8 schools. Well, it seems that there may be a positive relationship between the number of Asian or White students completing the assessments at those schools with & that school's higher overall assessment scores. Lilienthal, Lawton, & Yu A.F. have a higher number of Asian or White students who completed the assessment compared to other K-8 schools. Notice in Lawton & Yu A.F. that only Asian & White students completed the assessment, but predominantly Asian students account for the variability in the higher average assessment scores for those schools. Lilienthal seems to have a more uniform distribution of Asian & White students -- both ethnic groups contributing to the variability in the higher assessment scores for Lilienthal, compared to other K-8 schools.
+
+Now let's look at how a school's culture & climate and its relationship with student performance.
+
+# Culture/Climate
+
+Since African American students did not complete the survey, we will take their assessment scores out of the test score dataset. Also, we should remove the three K-8 schools who did not complete surveys before analysis. Those schools would be Carmichael, Revere, & SF Community. Once again, we'll be looking across program groups & ethnic groups separately.
+
+```{r}
+testScoreDF <- filter(testScoreDF, EthnicGroup != 'AA') %>%
+  filter(!(School %in% c('Carmichael (Bessie) K-8', 'Revere (Paul) K-8', 'SF Community K-8')))
+unique(testScoreDF$School)
+unique(surveyDF$school)
+```
+
+Let's start by looking at each school's culture/climate. The students' favorability for each construct for the culture/climate domain will give us an idea of each school's culture/climate.
+
+```{r, message = FALSE}
+filter(surveyDF, domain == 'Culture/Climate') %>%
+  group_by(school, construct) %>%
+  summarise(avg_favorability = mean(favorability))
+ggplot(filter(surveyDF, domain == 'Culture/Climate') %>%
+  group_by(school, construct) %>%
+  summarise(avg_favorability = mean(favorability)),
+  aes(x = school, y = avg_favorability, fill = construct)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Student Favorability of Culture/Climate for K-8 Schools') +
+  scale_fill_brewer(palette = 'Pastel1')
+```
+
+Immediately, I see that Lawton student's have high favor of their school's climate of support for academic learning -- this may be why their students' assessment scores are higher than other schools. For these K-8 schools, students' favorability of their school's safety ranks the lowest among all the other school culture/climate constructs. Hopefully, schools will do something to improve their students' favorability of their school's safety. Lawton students have the highest overall favorability over all of the constructs of their school's culture/climate compared to student's favorabilities at other schools. Buena Vista students have the lowest overall favorability over all of the constructs of their school's culture/climate compared to student's favorabilities at other schools. 
+
+Now let's see each school's ELASS & MathSS. We've seen these before, when we looked at student performance for all eight K-8 schools, but we'll recreate it with only the five k-8 schools who completed surveys.
+
+```{r, message = FALSE}
+testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = School, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'ELASS & MathSS for K-8 Schools') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+While we cannot create a model between favorability & performance per school, we can make some observations (There is no id where we can match a student up to their survey response, so we cannot create a connection between a student's survey response & their performance. Can't create an accurate model). Buena Vista's students have the lowest favorability of all their school's culture/climate constructs compared to student favorability of other schools. At the same time, Buena Vista averages the lowest ELASS & MathSS of the five K-8 schools. Lawton student's have the highest overall favorability of their school's culture/climate & they average the highest ELASS & MathSS of the five K-8 schools. From Lilienthal to Rooftop to Yu A.F., their students' overall favorability of their respective school's culture/climate seems to decline. We cannot say that is the same for their students' performance on their assessments. Lilienthal & Yu A.F student perform well on their assessments, Yu A.F. students edging Lilenthal students out slighly. Rooftop students do worse than Lilienthal & Yu A.F students on their assessments. While it seems there could be a potential positive relationship between student favorability of their school's culture/climate & their performance, we will never know because we do not have student ids.
+
+# Culture Climate - Program Groups
+
+```{r, message = FALSE, fig.width = 10, fig.height = 10}
+filter(surveyDF, domain == 'Culture/Climate' & group %in% c('SPED', 'Low SES', 'ELL')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability))
+ggplot(filter(surveyDF, domain == 'Culture/Climate' & group %in% c('SPED', 'Low SES', 'ELL')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability)),
+  aes(x = group, y = avg_favorability, fill = construct)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ school) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Program Group Favorability of School Culture/Climate') +
+  scale_fill_brewer(palette = 'Pastel2')
+```
+
+Across all program groups for each K-8 school, the favorability of the school's culture/climate follows a similar pattern. Student favorability of their school peaks for climate of support for academic learning, dips for knowledge & fairness of discipline rules & norms, dips again for safety, then peaks for sense of belonging. I wonder if all of these schools being part of the same district has any effect on this similar student favorability for their school's culture/climate constructs. It's also surprising that ELL students did not complete the survey for Lawton, Lilienthal, Rooftop, & Yu A.F. SPED students did not complete the survey for Lawton & Yu A.F. We will take these into account when we look at program group students' performance.
+
+Now let's look at student performance for these five K-8 schools, grouped by school & program group. Since our 'ProgramGroup' variable contains non-independent values, we will perform our transformations separately. EL performance, Low SES performance, & SPED performance:
+
+```{r, message = FALSE}
+englishLearner <- filter(testScoreDF, grepl('EL', ProgramGroup) & School == 'Buena Vista/ Mann K8') %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score)) %>%
+  mutate(ProgramGroup = 'EL') %>% as_tibble()
+socioEconomicStatus <- filter(testScoreDF, grepl('SES', ProgramGroup)) %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score)) %>%
+  mutate(ProgramGroup = 'SES') %>% as_tibble()
+specialEd <- filter(testScoreDF, grepl('SPED', ProgramGroup), School %in% c('Buena Vista/ Mann K8', 'Lilienthal Alt K8', 'Rooftop Alt K8')) %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score)) %>%
+  mutate(ProgramGroup = 'SPED') %>% as_tibble()
+programGroupDF <- rbind(englishLearner, socioEconomicStatus, specialEd)
+programGroupDF
+ggplot(programGroupDF, 
+       aes(x = ProgramGroup, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ School) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Performance of Students in Program Groups') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+Lawton, Lilienthal, & Yu A.F.'s Low SES students produce excellent assessment results -- their ELASS & MathSS are about the same, but their overall favorability of their school's culture/climate declines in that order. From ELL to Low SES to SPED program groups, the overall favorability of students in said program groups for Buena Vista's culture/climate declines, while performance on their English & Math assessments are increasing. Lilienthal & Rooftop students in Low SES & SPED program groups see increasing overall favorability of their school's culture/climate & increasing performance on their english & math assessments, in that order. Overall, it isn't clear if there is a relationship between student favorability of their school's culture/climate& student success when completing their assessments, even when separated by program groups, because not all program groups from all schools completed the survey. Also, since there is no id to link student performance to their survey responses, we cannot create an accurate model. 
+
+# Culture/Climate - Ethnic Groups
+
+```{r, message = FALSE, fig.width = 10, fig.height = 10}
+filter(surveyDF, domain == 'Culture/Climate' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability))
+ggplot(filter(surveyDF, domain == 'Culture/Climate' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability)),
+  aes(x = group, y = avg_favorability, fill = construct)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ school) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Students of Different Ethnic Groups & Their \n Favorability of School Culture/Climate') +
+  scale_fill_brewer(palette = 'Pastel2')
+```
+
+Surprisingly, Buena Vista only had Hispanic/Latino students who completed the survey. Lawton & Yu A.F. only had Asian students who completed the survey. It's difficult to see if there is any pattern in favorability of school culture/climate from students of different ethnic backgrounds, when not all students from different ethnic groups completed the survey. Asian, Hispanic/Latino, & White students' favorability of Lilienthal's culture/climate seems fairly similar. Based of the survey responses from Rooftop, Asian students have higher favorability of their school's culture & climate compared to Hispanic/Latino or White students. Hispanic/Latino & White students at Rooftop seem to have similar favorability of their school's culture/climate.
+
+Now let's look into performance from students of different ethnic backgrounds, taking into account that some some schools do not have survey responses from certain ethnic groups.
+
+```{r, message = FALSE}
+filter(testScoreDF, School %in% c('Lilienthal Alt K8', 'Rooftop Alt K8') | (School %in% c('Lawton Alt K8', 'Yu (A.F.) Alt K8') & EthnicGroup == 'Asian') | (School == 'Buena Vista/ Mann K8' & EthnicGroup == 'HL')) %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement', 
+               values_to = 'Score') %>%
+  group_by(School, EthnicGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(filter(testScoreDF, School %in% c('Lilienthal Alt K8', 'Rooftop Alt K8') | (School %in% c('Lawton Alt K8', 'Yu (A.F.) Alt K8') & EthnicGroup == 'Asian') | (School == 'Buena Vista/ Mann K8' & EthnicGroup == 'HL')) %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement', 
+               values_to = 'Score') %>%
+  group_by(School, EthnicGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = EthnicGroup, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ School) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Students of Different Ethnic Groups & \n Their Performance on Assessments') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+Asian & White students seem to perform very well on their assessments, regardless of what K-8 school they attend. Hispanic/Latino students perform worse than Asian & White students on their assessments. I can see somewhat of a relationship between favorabilities of students from different ethnic groups for their school & their performance on their assessments. Hispanic/Latino students from Buena Vista have the lowest overall favorability for their school's culture/climate, & perform the worst on their assessments, compared to students of the same or different ethnic backgrounds from other schools. Lawton students & Lilienthal students have similarly high favorability of their school's culture/climate & they perform similarly, quite well actually, on their English & Math assessments. Rooftop's Asian students have high favorability of their school's climate of support for academic learning, but overall, Rooftop's culture/climate favorability across all ethnic groups who completed the survey is lower than that of Lilienthal's. This is reflected in Rooftop & Lilienthal's student performance scores -- Lilienthal's students performing slightly better than Rooftop's students, across all ethnic groups who completed the survey. 
+
+# Growth Mindset
+
+Now, let's look at students' growth mindset. We can get a decent idea of what a student's growth mindset is if we look at their favorability of the growth mindset constructs.
+
+```{r, message = FALSE}
+filter(surveyDF, domain == 'Social-Emotional Learning') %>%
+  group_by(school, construct) %>%
+  summarise(avg_favorability = mean(favorability))
+ggplot(filter(surveyDF, domain == 'Social-Emotional Learning') %>%
+  group_by(school, construct) %>%
+  summarise(avg_favorability = mean(favorability)),
+  aes(x = school, y = avg_favorability, fill = construct)) +
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Student Growth Mindsets of K-8 Schools ') +
+  scale_fill_brewer(palette = 'Pastel2')
+```
+
+Firstly, I find it's interesting how the structure of the favorability patterns seem similar for each school. We start off with a little peak for growth mindset, a dip for self-efficacy, a strong peak for self-management, then a peak once again for social awareness. Buena Vista has the lowest favorability out of the five K-8 schools for every construct in the growth mindset domain. It seems that Lilienthal students have the highest overall favorability of their own growth mindsets, followed Lawton & Rooftop students, then Yu A.F. students. Self-management has the highest average favorability for students in these five K-8 schools & self-efficacy has the lowest.
+
+Now let's look at student performance the English & Math assessments for each school again, & see if there can be a relationship between students' growth mindset & their assessment scores.
+
+```{r, message = FALSE}
+testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(testScoreDF %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement',
+               values_to = 'Score') %>%
+  group_by(School, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = School, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'ELASS & MathSS for K-8 Schools') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+From the looks of it, there could be a possible positive relationship between students' favorability of their own growth mindsets & their performance on the English & Math assessments, though having no id to connect the survey responses & perfomance on assessments building a model to explain this relationship not possible. We can only make observations of the figures. Buena Vista's students have the lowest overall favorability of their own growth mindsets, & perform the worst of the five K-8 schools on their English & Math assessments. Lilienthal, Lawton, & Yu A.F.'s students see a slight decrease in overall favorability of their own growth mindsets, in that order, but seem to perform similarly well in their performance assessments. Lilienthal's students have the greatest favorability of their own growth mindset & Lawton's students perform the best on their assessments.
+
+# Growth Mindset - Program Groups
+
+Let's look at students' growth mindsets separated by their program groups.
+
+```{r, message = FALSE}
+filter(surveyDF, domain == 'Social-Emotional Learning' & group %in% c('ELL', 'Low SES', 'SPED')) %>% 
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability))
+ggplot(filter(surveyDF, domain == 'Social-Emotional Learning' & group %in% c('ELL', 'Low SES', 'SPED')) %>% 
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability)),
+  aes(x = group, y = avg_favorability, fill = construct)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ school) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Students of Different Program Groups & \n Their Growth Mindsets') +
+  scale_fill_brewer(palette = 'Pastel2')
+```
+
+Immediately we can see that Buena Vista's students, regardless of the program group that they belong in, score very low on their favorability of their growth mindsets. Lawton only had low SES students who completed the survey, & they had high favorability of their growth mindset, despite being low SES. Lilienthal's low SES & SPED program groups had similar overall favorability of their growth mindsets across its constructs, but lower favorability than Lawton's low SES students. Rooftop had low SES & SPED students as well & they scored similar overall favorabilities across all constructs of their growth mindsets to Lilienthal's students of the same program group. Yu A.F's Low SES students is comparable to Lawton's low SES students, but much less favorability of their own growth mindsets, despite performing similarly on their assessments, as we know from earlier. 
+
+Let's look once again at student performance on their English & Math assessments for each school, taking into account that not all schools have students of certain program groups who completed the survey.
+
+```{r}
+programGroupDF
+ggplot(programGroupDF, 
+       aes(x = ProgramGroup, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = 'dodge', stat = 'identity') +
+  facet_wrap(~ School) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Students of Different Program Groups & \n Their ELASS & MathSS Performance') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+Based off this figure & the corresponding figure on favorability of students in program groups per school, there could a possible positive relationship between favorability of students' growth mindsets & their performance on their English/Math assessments, but performance variance between program groups is hard to distinguish because there is no id for a student allowing us to form a connection between favorability & assessment scores. In Buena Vista, Low SES students have the highest overall favorability of their own growth mindsets, next is ELL & last is SPED. But when we look at their average performance, we see the low SES students have greater assessment scores than EL students, & SPED students greater scores than low SES students. Lilienthal & Rooftop's low SES & SPED students seem to have similar overall favorabilities of their growth mindsets. When we look at their average assessment scores, SPED students perform better than SES students on their assessments in both schools -- Lilienthal's students performing slightly better overall than Rooftop for both program groups. Restated from before, Lawton's low SES group sees the highest overall favorability of all program groups in these five K-8 schools. Yu A.F.'s low SES students sees lower favorability than Lawton's low SES students, but perform slightly better than Lawton's students on their assessments. I wonder why Yu A.F.'s students perform so well but have lower favorability of their own growth mindsets than Lawton's students. Both Lawton & Yu A.F.'s students are predominantly Asian, so it may not be an ethnic group count difference. Could it be something related to curriculum or the way the student's are treated that make them feel unfavorable of their own growth mindset?
+
+# Growth Mindset - Ethnic Groups
+
+Here's the average favorability of each construct from each ethnic group for each school.
+
+```{r, message = FALSE}
+filter(surveyDF, domain == 'Social-Emotional Learning' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability))
+ggplot(filter(surveyDF, domain == 'Social-Emotional Learning' & group %in% c('African American', 'Hispanic/Latino', 'Asian', 'White')) %>%
+  group_by(school, group, construct) %>%
+  summarise(avg_favorability = mean(favorability)),
+  aes(x = group, y = avg_favorability, fill = construct)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ school) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Students of Different Ethnic Groups & \n Their Growth Mindsets') +
+  scale_fill_brewer(palette = 'Pastel2')
+```
+
+Now here's the average assessment scores of each ethnic group for each school, accounting for the ethic groups who did not complete the survey for each school.
+
+```{r, message = FALSE}
+filter(testScoreDF, School %in% c('Lilienthal Alt K8', 'Rooftop Alt K8') | (School %in% c('Lawton Alt K8', 'Yu (A.F.) Alt K8') & EthnicGroup == 'Asian') | (School == 'Buena Vista/ Mann K8' & EthnicGroup == 'HL')) %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement', 
+               values_to = 'Score') %>%
+  group_by(School, EthnicGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score))
+ggplot(filter(testScoreDF, School %in% c('Lilienthal Alt K8', 'Rooftop Alt K8') | (School %in% c('Lawton Alt K8', 'Yu (A.F.) Alt K8') & EthnicGroup == 'Asian') | (School == 'Buena Vista/ Mann K8' & EthnicGroup == 'HL')) %>%
+  pivot_longer(cols = c('ELASS', 'MathSS'), names_to = 'Measurement', 
+               values_to = 'Score') %>%
+  group_by(School, EthnicGroup, Measurement) %>%
+  summarise(Avg_Score = mean(Score)),
+  aes(x = EthnicGroup, y = Avg_Score, fill = Measurement)) +
+  geom_bar(position = position_dodge2(width = 0.5, preserve = 'single'), stat = 'identity') +
+  facet_wrap(~ School) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = 'Students of Different Ethnic Groups & \n Their Performance on Assessments') +
+  scale_fill_manual(values = c('burlywood', 'cadetblue3'))
+```
+
+This looks promising. Buena Vista's Hispanic/Latino students see the lowest overall favorability in their growth mindsets & also perform the worst of all schools, regardless of ethnic groups. Rooftop & Lilienthal's favorabilities for Asian, Hispanic/Latino, & White students are pretty similar for each ethnic group, & visualises in a similar shape. Asian students at Rooftop & Lilienthal have high favorability of their own growth mindsets, & this is reflected in thier performance on their English & Math assessments. Their marks excel above other schools. Hispanic students at Lilienthal & Rooftop have lower overall favorability of their own growth mindsets, & see lower performance scores than the Asian & White students at their respective schools. Lawton & Yu A.F.'s Asian students see similar overall favorabilities of their growth mindsets, but both lower than that of Asian students at Lilienthal & Rooftop. Lawton & Yu A.F.'s Asian students do seem to perform pretty well on their English & Math assessments, not as well as Lilienthal's Asian students. The amount of similarity in the variability of favorability & performance scores for each ethnic group for each school, suggests that there is a positive relationship between favorability & performance. There also seems to be a pattern between ethnic group & performance, & ethnic group & favorability, so there could very well be a double relationship. Very interesting.
